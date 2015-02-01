@@ -1,3 +1,36 @@
+/*
+ * X.Org X server driver for VIGS
+ *
+ * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Contact :
+ * Stanislav Vorobiov <s.vorobiov@samsung.com>
+ * Jinhyung Jo <jinhyung.jo@samsung.com>
+ * YeongKyoon Lee <yeongkyoon.lee@samsung.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Contributors:
+ * - S-Core Co., Ltd
+ *
+ */
+
 #ifndef _VIGS_PROTOCOL_H_
 #define _VIGS_PROTOCOL_H_
 
@@ -8,7 +41,7 @@
 /*
  * Bump this whenever protocol changes.
  */
-#define VIGS_PROTOCOL_VERSION 17
+#define VIGS_PROTOCOL_VERSION 20
 
 #define VIGS_MAX_PLANES 2
 
@@ -52,6 +85,7 @@ typedef enum
     vigsp_cmd_copy = 0x8,
     vigsp_cmd_solid_fill = 0x9,
     vigsp_cmd_set_plane = 0xA,
+    vigsp_cmd_ga_copy = 0xB
     /*
      * @}
      */
@@ -62,6 +96,24 @@ typedef enum
     vigsp_surface_bgrx8888 = 0x0,
     vigsp_surface_bgra8888 = 0x1,
 } vigsp_surface_format;
+
+typedef enum
+{
+    vigsp_plane_bgrx8888 = 0x0,
+    vigsp_plane_bgra8888 = 0x1,
+    vigsp_plane_nv21 = 0x2,
+    vigsp_plane_nv42 = 0x3,
+    vigsp_plane_nv61 = 0x4,
+    vigsp_plane_yuv420 = 0x5
+} vigsp_plane_format;
+
+typedef enum
+{
+    vigsp_rotation0   = 0x0,
+    vigsp_rotation90  = 0x1,
+    vigsp_rotation180 = 0x2,
+    vigsp_rotation270 = 0x3
+} vigsp_rotation;
 
 #pragma pack(1)
 
@@ -303,9 +355,9 @@ struct vigsp_cmd_solid_fill_request
 /*
  * cmd_set_plane
  *
- * Assigns surface 'sfc_id' to plane identified by 'plane'.
+ * Assigns surfaces 'surfaces' to plane identified by 'plane'.
  *
- * Pass 0 as sfc_id in order to disable the plane.
+ * Pass 0 as surfaces[0] in order to disable the plane.
  *
  * @{
  */
@@ -313,12 +365,43 @@ struct vigsp_cmd_solid_fill_request
 struct vigsp_cmd_set_plane_request
 {
     vigsp_u32 plane;
-    vigsp_surface_id sfc_id;
+    vigsp_u32 width;
+    vigsp_u32 height;
+    vigsp_plane_format format;
+    vigsp_surface_id surfaces[4];
     struct vigsp_rect src_rect;
     vigsp_s32 dst_x;
     vigsp_s32 dst_y;
     struct vigsp_size dst_size;
     vigsp_s32 z_pos;
+    vigsp_bool hflip;
+    vigsp_bool vflip;
+    vigsp_rotation rotation;
+};
+
+/*
+ * @}
+ */
+
+/*
+ * cmd_ga_copy
+ *
+ * Copies part of surface 'src_id' to
+ * surface 'dst_id' given surface
+ * sizes.
+ *
+ * @{
+ */
+
+struct vigsp_cmd_ga_copy_request
+{
+    vigsp_surface_id src_id;
+    vigsp_bool src_scanout;
+    vigsp_offset src_offset;
+    vigsp_u32 src_stride;
+    vigsp_surface_id dst_id;
+    vigsp_u32 dst_stride;
+    struct vigsp_copy entry;
 };
 
 /*

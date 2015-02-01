@@ -44,6 +44,8 @@ make %{?jobs:-j%jobs}
 rm -rf %{buildroot}
 # >> install pre
 # << install pre
+mkdir -p %{buildroot}/usr/share/license
+cp -af COPYING %{buildroot}/usr/share/license/%{name}
 make INSTALL_DIR=%{buildroot}%{_libdir}/xorg/modules/drivers install
 
 # >> install post
@@ -54,4 +56,5 @@ execstack -c %{buildroot}%{_libdir}/xorg/modules/drivers/vigs_drv.so
 %defattr(-,root,root,-)
 # >> files vigs
 %{_libdir}/xorg/modules/drivers/*.so
+/usr/share/license/%{name}
 # << files vigs
