@@ -31,23 +31,40 @@
  *
  */
 
-#include "vigs_options.h"
+#include "vigs_drm_plane.h"
+#include "vigs_drm.h"
+#include "vigs_log.h"
 
-const OptionInfoRec g_vigs_options[vigs_option_count + 1] =
+Bool vigs_drm_plane_init(struct vigs_drm *drm, int num)
 {
-    {
-        vigs_option_max_execbuffer_size,
-        "MaxExecbufferSize",
-        OPTV_INTEGER,
-        { 100000 },
-        FALSE
-    },
-    {
-        vigs_option_no_accel,
-        "NoAccel",
-        OPTV_BOOLEAN,
-        { 0 },
-        FALSE
-    },
-    { -1, NULL, OPTV_NONE, {0}, FALSE }
-};
+    struct vigs_drm_plane *plane;
+
+    VIGS_LOG_TRACE("%d", num);
+
+    plane = xnfcalloc(sizeof(*plane), 1);
+
+    vigs_list_init(&plane->list);
+    plane->drm = drm;
+    plane->num = num;
+    plane->mode_plane = drmModeGetPlane(drm->fd,
+                                        drm->plane_res->planes[num]);
+
+    if (!plane->mode_plane) {
+        return FALSE;
+    }
+
+    vigs_list_add_tail(&drm->planes, &plane->list);
+
+    return TRUE;
+}
+
+void vigs_drm_plane_destroy(struct vigs_drm_plane *plane)
+{
+    VIGS_LOG_TRACE("%d", plane->num);
+
+    vigs_list_remove(&plane->list);
+
+    drmModeFreePlane(plane->mode_plane);
+
+    free(plane);
+}

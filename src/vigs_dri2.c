@@ -1,3 +1,36 @@
+/*
+ * X.Org X server driver for VIGS
+ *
+ * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Contact :
+ * Stanislav Vorobiov <s.vorobiov@samsung.com>
+ * Jinhyung Jo <jinhyung.jo@samsung.com>
+ * YeongKyoon Lee <yeongkyoon.lee@samsung.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Contributors:
+ * - S-Core Co., Ltd
+ *
+ */
+
 #include "vigs_dri2.h"
 #include "vigs_screen.h"
 #include "vigs_drm.h"
@@ -55,6 +88,38 @@ static Bool vigs_dri2_client_subsystem_init(struct vigs_screen *vigs_screen)
     }
 
     return TRUE;
+}
+
+static void vigs_dri2_send_sync_draw_done(ScreenPtr screen,
+                                          ClientPtr client,
+                                          DrawablePtr drawable)
+{
+    static Atom sync_draw_done = None;
+    xEvent event;
+    DeviceIntPtr dev = PickPointer(client);
+
+    if (sync_draw_done == None) {
+        sync_draw_done = MakeAtom("_E_COMP_SYNC_DRAW_DONE",
+                                  strlen("_E_COMP_SYNC_DRAW_DONE"),
+                                  TRUE);
+    }
+
+    memset (&event, 0, sizeof (xEvent));
+    event.u.u.type = ClientMessage;
+    event.u.u.detail = 32;
+    event.u.clientMessage.u.l.type = sync_draw_done;
+    event.u.clientMessage.u.l.longs0 = drawable->id; // window id
+    event.u.clientMessage.u.l.longs1 = 1; // version
+    event.u.clientMessage.u.l.longs2 = drawable->width; // window's width
+    event.u.clientMessage.u.l.longs3 = drawable->height; // window's height
+
+    VIGS_LOG_TRACE("client=%d pDraw->id=%x width=%d height=%d\n",
+                   client->index, drawable->id,
+                   drawable->width, drawable->height);
+
+    DeliverEventsToWindow(dev, screen->root, &event, 1,
+                          SubstructureRedirectMask | SubstructureNotifyMask,
+                          NullGrab);
 }
 
 static DRI2BufferPtr vigs_dri2_create_buffer(DrawablePtr drawable,
@@ -336,7 +401,6 @@ static void vigs_dri2_exchange_pixmaps(struct vigs_screen *vigs_screen,
                                        PixmapPtr dest,
                                        PixmapPtr src)
 {
-    struct vigs_pixmap *new_dest, *new_src;
     RegionRec region;
 
     /*
@@ -355,10 +419,7 @@ static void vigs_dri2_exchange_pixmaps(struct vigs_screen *vigs_screen,
     region.data = NULL;
     DamageRegionAppend(&dest->drawable, &region);
 
-    new_dest = pixmap_to_vigs_pixmap(src);
-    new_src = pixmap_to_vigs_pixmap(dest);
-    vigs_pixmap_set_private(dest, new_dest);
-    vigs_pixmap_set_private(src, new_src);
+    vigs_pixmap_exchange(vigs_screen, dest, src);
 
     DamageRegionProcessPending(&dest->drawable);
 }
@@ -428,6 +489,7 @@ static void vigs_dri2_copy_region(DrawablePtr drawable,
     RegionPtr copy_clip;
     GCPtr gc;
     DrawablePtr src_draw, dst_draw;
+    struct vigs_pixmap *vigs_pixmap;
 
     VIGS_LOG_TRACE("dest = %p, src = %p", dest, src);
 
@@ -464,6 +526,9 @@ static void vigs_dri2_copy_region(DrawablePtr drawable,
     }
 
     gc = GetScratchGC(drawable->depth, drawable->pScreen);
+    if (!gc) {
+        return;
+    }
 
     copy_clip = REGION_CREATE(drawable->pScreen, NULL, 0);
 
@@ -472,6 +537,12 @@ static void vigs_dri2_copy_region(DrawablePtr drawable,
     gc->funcs->ChangeClip(gc, CT_REGION, copy_clip, 0);
 
     ValidateGC(dst_draw, gc);
+
+    if (dest->attachment == DRI2BufferFrontLeft) {
+        vigs_pixmap = pixmap_to_vigs_pixmap(vigs_dst->pixmap);
+
+        vigs_drm_gem_wait(&vigs_pixmap->sfc->gem);
+    }
 
     gc->ops->CopyArea(src_draw, dst_draw, gc, 0, 0,
                       drawable->width, drawable->height,
@@ -562,6 +633,9 @@ void vigs_dri2_vblank_handler(struct vigs_dri2_frame_event *frame_event,
                          DRI2_BLIT_COMPLETE,
                          frame_event->event_func,
                          frame_event->event_data);
+        vigs_dri2_send_sync_draw_done(drawable->pScreen,
+                                      frame_event->client,
+                                      drawable);
         break;
     case vigs_dri2_waitmsc:
         DRI2WaitMSCComplete(frame_event->client,
@@ -647,6 +721,9 @@ void vigs_dri2_page_flip_handler(struct vigs_dri2_frame_event *frame_event,
                          DRI2_FLIP_COMPLETE,
                          frame_event->event_func,
                          frame_event->event_data);
+        vigs_dri2_send_sync_draw_done(drawable->pScreen,
+                                      frame_event->client,
+                                      drawable);
         break;
     default:
         xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Unknown pageflip event received\n");
@@ -870,6 +947,10 @@ fallback:
     vigs_dri2_blit_swap(drawable, dest, src);
 
     DRI2SwapComplete(client, drawable, 0, 0, 0, DRI2_BLIT_COMPLETE, func, data);
+
+    vigs_dri2_send_sync_draw_done(drawable->pScreen,
+                                  client,
+                                  drawable);
 
     if (frame_event) {
         vigs_dri2_client_remove_frame_event(frame_event);

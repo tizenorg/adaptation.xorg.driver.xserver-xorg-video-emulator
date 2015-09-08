@@ -1,3 +1,36 @@
+/*
+ * X.Org X server driver for VIGS
+ *
+ * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Contact :
+ * Stanislav Vorobiov <s.vorobiov@samsung.com>
+ * Jinhyung Jo <jinhyung.jo@samsung.com>
+ * YeongKyoon Lee <yeongkyoon.lee@samsung.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Contributors:
+ * - S-Core Co., Ltd
+ *
+ */
+
 #include "vigs_drm_output.h"
 #include "vigs_drm.h"
 #include "vigs_log.h"
@@ -84,13 +117,12 @@ static void vigs_drm_output_create_resources(xf86OutputPtr output)
                                          FALSE);
 
     /*
-     * pageflip is off by default. Currently doing pageflips
-     * is heavier than swapping, will address this later.
+     * pageflip is on by default.
      */
     vigs_drm_output_create_bool_property(output,
                                          &g_pageflip_atom,
                                          VIGS_PROPERTY_PAGEFLIP,
-                                         FALSE,
+                                         TRUE,
                                          FALSE);
 }
 
@@ -329,11 +361,13 @@ void vigs_drm_output_dpms(xf86OutputPtr output, int mode)
         prop = drmModeGetProperty(vigs_output->drm->fd,
                                   vigs_output->mode_connector->props[i]);
 
-        if (prop && (prop->flags & DRM_MODE_PROP_ENUM)) {
-            if (strcmp(prop->name, "DPMS") == 0) {
-                mode_id = vigs_output->mode_connector->props[i];
-                drmModeFreeProperty(prop);
-                break;
+        if (prop) {
+            if (prop->flags & DRM_MODE_PROP_ENUM) {
+                if (strcmp(prop->name, "DPMS") == 0) {
+                    mode_id = vigs_output->mode_connector->props[i];
+                    drmModeFreeProperty(prop);
+                    break;
+                }
             }
             drmModeFreeProperty(prop);
         }

@@ -31,88 +31,45 @@
  *
  */
 
-#ifndef _VIGS_SCREEN_H_
-#define _VIGS_SCREEN_H_
+#ifndef _VIGS_XV_OVERLAY_H_
+#define _VIGS_XV_OVERLAY_H_
 
 #include "vigs_config.h"
-#include "vigs_list.h"
-#include "vigs_options.h"
 #include "xf86.h"
-#include "uxa/uxa.h"
 
-#include "compat-api.h"
-
-struct vigs_drm;
-struct vigs_comm;
-struct vigs_xv;
+struct vigs_screen;
+struct vigs_drm_plane;
 struct vigs_drm_surface;
 
-struct vigs_screen
+struct vigs_xv_overlay
 {
-    ScrnInfoPtr scrn;
+    struct vigs_drm_plane *plane;
 
-    EntityInfoPtr ent;
+    struct vigs_drm_surface *sfc;
 
-    OptionInfoRec options[vigs_option_count + 1];
-
-    /*
-     * Set through X.Org options.
-     * @{
-     */
-    uint32_t max_execbuffer_size;
-    int no_accel;
-    /*
-     * @}
-     */
-
-    /*
-     * Set through XRANDR.
-     * @{
-     */
-    int vsync;
-    int pageflip;
-    /*
-     * @}
-     */
-
-    struct vigs_drm *drm;
-
-    struct vigs_comm *comm;
-
-    struct vigs_drm_surface *front_sfc;
-
-    uxa_driver_t *uxa_driver;
-
-    struct vigs_xv *xv;
-
-    CloseScreenProcPtr close_screen_fn;
-    CreateScreenResourcesProcPtr create_screen_resources_fn;
-    ScreenBlockHandlerProcPtr block_handler_fn;
-
-    int pre_initialized;
-
-    int initialized;
-
-    /*
-     * A list of pixmaps that have dirty VRAM.
-     */
-    struct vigs_list dirty_vram_pixmaps;
+    uint32_t fb_id;
 };
 
-Bool vigs_screen_pre_init(ScrnInfoPtr scrn, int flags);
+struct vigs_xv_overlay *vigs_xv_overlay_create(struct vigs_drm_plane *plane);
 
-Bool vigs_screen_init(SCREEN_INIT_ARGS_DECL);
+void vigs_xv_overlay_destroy(struct vigs_xv_overlay *overlay);
 
-Bool vigs_screen_switch_mode(SWITCH_MODE_ARGS_DECL);
+Bool vigs_xv_overlay_enable(struct vigs_xv_overlay *overlay,
+                            uint32_t width, uint32_t height);
 
-void vigs_screen_adjust_frame(ADJUST_FRAME_ARGS_DECL);
+Bool vigs_xv_overlay_enable_surface(struct vigs_xv_overlay *overlay,
+                                    struct vigs_drm_surface *sfc);
 
-ModeStatus vigs_screen_valid_mode(SCRN_ARG_TYPE arg, DisplayModePtr mode, Bool verbose, int flags);
+Bool vigs_xv_overlay_enabled(struct vigs_xv_overlay *overlay);
 
-Bool vigs_screen_enter_vt(VT_FUNC_ARGS_DECL);
+Bool vigs_xv_overlay_update(struct vigs_xv_overlay *overlay,
+                            const xRectangle *src_rect,
+                            const xRectangle *dst_rect,
+                            int zpos,
+                            int hflip,
+                            int vflip,
+                            int rotation);
 
-void vigs_screen_leave_vt(VT_FUNC_ARGS_DECL);
-
-void vigs_screen_free(FREE_SCREEN_ARGS_DECL);
+void vigs_xv_overlay_disable(struct vigs_xv_overlay *overlay);
 
 #endif

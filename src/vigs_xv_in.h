@@ -31,23 +31,14 @@
  *
  */
 
-#include "vigs_options.h"
+#ifndef _VIGS_XV_IN_H_
+#define _VIGS_XV_IN_H_
 
-const OptionInfoRec g_vigs_options[vigs_option_count + 1] =
-{
-    {
-        vigs_option_max_execbuffer_size,
-        "MaxExecbufferSize",
-        OPTV_INTEGER,
-        { 100000 },
-        FALSE
-    },
-    {
-        vigs_option_no_accel,
-        "NoAccel",
-        OPTV_BOOLEAN,
-        { 0 },
-        FALSE
-    },
-    { -1, NULL, OPTV_NONE, {0}, FALSE }
-};
+#include "vigs_config.h"
+
+struct vigs_xv;
+struct vigs_xv_adaptor;
+
+struct vigs_xv_adaptor *vigs_xv_in_create(struct vigs_xv *xv);
+
+#endif

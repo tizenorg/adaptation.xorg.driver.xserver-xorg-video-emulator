@@ -1,3 +1,36 @@
+/*
+ * X.Org X server driver for VIGS
+ *
+ * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Contact :
+ * Stanislav Vorobiov <s.vorobiov@samsung.com>
+ * Jinhyung Jo <jinhyung.jo@samsung.com>
+ * YeongKyoon Lee <yeongkyoon.lee@samsung.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Contributors:
+ * - S-Core Co., Ltd
+ *
+ */
+
 #include "vigs_pixmap.h"
 #include "vigs_screen.h"
 #include "vigs_drm.h"
@@ -107,7 +140,7 @@ Bool vigs_pixmap_create_from_surface(PixmapPtr pixmap,
     vigs_pixmap->pixmap = pixmap;
     vigs_pixmap->sfc = sfc;
 
-    ret = vigs_drm_gem_map(&sfc->gem, 0);
+    ret = vigs_drm_gem_map(&sfc->gem, 1);
 
     if (ret != 0) {
         xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Unable to map FB GEM: %s\n", strerror(-ret));
@@ -189,6 +222,38 @@ void vigs_pixmap_destroy(PixmapPtr pixmap)
     free(vigs_pixmap);
 }
 
+void vigs_pixmap_exchange(struct vigs_screen *vigs_screen,
+                          PixmapPtr dest,
+                          PixmapPtr src)
+{
+    struct vigs_pixmap *new_dest, *new_src;
+
+    new_dest = pixmap_to_vigs_pixmap(src);
+    new_src = pixmap_to_vigs_pixmap(dest);
+    vigs_pixmap_set_private(dest, new_dest);
+    vigs_pixmap_set_private(src, new_src);
+    new_dest->pixmap = dest;
+    new_src->pixmap = src;
+
+    if (new_dest->sfc->gem.vaddr != new_src->sfc->gem.vaddr) {
+            vigs_screen->scrn->pScreen->ModifyPixmapHeader(dest,
+                                                           -1,
+                                                           -1,
+                                                           -1,
+                                                           -1,
+                                                           -1,
+                                                           new_dest->sfc->gem.vaddr);
+
+            vigs_screen->scrn->pScreen->ModifyPixmapHeader(src,
+                                                           -1,
+                                                           -1,
+                                                           -1,
+                                                           -1,
+                                                           -1,
+                                                           new_src->sfc->gem.vaddr);
+    }
+}
+
 void vigs_pixmap_set_vram_dirty(struct vigs_pixmap *vigs_pixmap,
                                 int x, int y, int w, int h)
 {
@@ -261,7 +326,7 @@ int vigs_pixmap_is_gpu_dirty(struct vigs_pixmap *vigs_pixmap)
 Bool vigs_pixmap_create_sfc(PixmapPtr pixmap)
 {
     struct vigs_pixmap *vigs_pixmap = pixmap_to_vigs_pixmap(pixmap);
-    struct vigs_screen *vigs_screen = vigs_pixmap->screen;
+    struct vigs_screen *vigs_screen = NULL;
     vigsp_surface_format format;
     int ret;
 
@@ -269,6 +334,8 @@ Bool vigs_pixmap_create_sfc(PixmapPtr pixmap)
 
     if (!vigs_pixmap) {
         return FALSE;
+    } else {
+        vigs_screen = vigs_pixmap->screen;
     }
 
     if (vigs_pixmap->sfc) {
@@ -297,6 +364,7 @@ Bool vigs_pixmap_create_sfc(PixmapPtr pixmap)
                                   vigs_pixmap_height(pixmap),
                                   vigs_pixmap_stride(pixmap),
                                   format,
+                                  0,
                                   &vigs_pixmap->sfc);
 
     if (ret != 0) {

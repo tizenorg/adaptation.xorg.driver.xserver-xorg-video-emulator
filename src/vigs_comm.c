@@ -1,3 +1,36 @@
+/*
+ * X.Org X server driver for VIGS
+ *
+ * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Contact :
+ * Stanislav Vorobiov <s.vorobiov@samsung.com>
+ * Jinhyung Jo <jinhyung.jo@samsung.com>
+ * YeongKyoon Lee <yeongkyoon.lee@samsung.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Contributors:
+ * - S-Core Co., Ltd
+ *
+ */
+
 #include "vigs_comm.h"
 #include "vigs_screen.h"
 #include "vigs_drm.h"
@@ -18,23 +51,26 @@
  * | cmd N-1                          |
  * |----------------------------------| cmd_ptr
  * | cmd                              |
- * |                                  |
- * | struct vigsp_cmd_response_header |
  * |----------------------------------| cmd_ptr + cmd_size
  * |                                  |
  * |                                  |
  * |----------------------------------| execbuffer->gem.vaddr + execbuffer->gem.size
  *
- * "cmd_count" is the number of complete commands, N-1 in this case.
  * "cmd" is the current command.
  * "cmd_ptr" is its start address.
  * "cmd_size" is the size of the current command so far.
- * "cmd_ptr - execbuffer->gem.vaddr" is "complete_size"
- *
- * Note that "cmd_size" always accounts for
- * struct vigsp_cmd_response_header, this is for convenience, so that
- * vigs_comm_flush won't have to allocate the response header.
  */
+
+static inline int vigs_comm_have_cmds(struct vigs_comm *comm)
+{
+    if (comm->execbuffer &&
+        (comm->cmd_ptr >
+         (comm->execbuffer->gem.vaddr + sizeof(struct vigsp_cmd_batch_header)))) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
 
 static inline void *vigs_comm_cmd_get_request(struct vigs_comm *comm)
 {
@@ -120,7 +156,7 @@ static void *vigs_comm_cmd_alloc(struct vigs_comm *comm, uint32_t size)
         return tmp;
     }
 
-    if (comm->cmd_count <= 0) {
+    if (!vigs_comm_have_cmds(comm)) {
         /*
          * Failed to allocate additional space in execbuffer, if the current
          * command is the only one in the buffer then we obviously failed.
@@ -135,10 +171,6 @@ static void *vigs_comm_cmd_alloc(struct vigs_comm *comm, uint32_t size)
      */
 
     (void)vigs_comm_flush(comm);
-
-    if (comm->alloc_failed) {
-        return NULL;
-    }
 
     tmp = vigs_comm_execbuffer_realloc(comm, size);
 
@@ -164,8 +196,7 @@ static void *vigs_comm_cmd_prepare(struct vigs_comm *comm,
     if (comm->execbuffer) {
         request_header = vigs_comm_cmd_alloc(comm,
             sizeof(*request_header) +
-            request_size +
-            sizeof(struct vigsp_cmd_response_header));
+            request_size);
 
         if (!request_header) {
             comm->alloc_failed = 0;
@@ -178,8 +209,7 @@ static void *vigs_comm_cmd_prepare(struct vigs_comm *comm,
         batch_header = vigs_comm_cmd_alloc(comm,
             sizeof(struct vigsp_cmd_batch_header) +
             sizeof(*request_header) +
-            request_size +
-            sizeof(struct vigsp_cmd_response_header));
+            request_size);
 
         if (!batch_header) {
             comm->alloc_failed = 0;
@@ -187,6 +217,11 @@ static void *vigs_comm_cmd_prepare(struct vigs_comm *comm,
         }
 
         request_header = (struct vigsp_cmd_request_header*)(batch_header + 1);
+
+        /*
+         * Don't account for batch header as part of command.
+         */
+        comm->cmd_size -= sizeof(struct vigsp_cmd_batch_header);
     }
 
     comm->cmd = cmd;
@@ -199,9 +234,6 @@ static void *vigs_comm_cmd_append(struct vigs_comm *comm,
                                   vigsp_cmd cmd,
                                   uint32_t size)
 {
-    void *tmp;
-    uint32_t new_size;
-
     if (comm->cmd_size <= 0) {
         return NULL;
     }
@@ -216,68 +248,37 @@ static void *vigs_comm_cmd_append(struct vigs_comm *comm,
         return NULL;
     }
 
-    tmp = vigs_comm_cmd_alloc(comm, size);
-
-    if (tmp) {
-        /*
-         * Always keep struct vigsp_cmd_response_header at the end.
-         */
-        tmp -= sizeof(struct vigsp_cmd_response_header);
-    }
-
-    return tmp;
+    return vigs_comm_cmd_alloc(comm, size);
 }
 
-static void *vigs_comm_cmd_done(struct vigs_comm *comm,
-                                vigsp_cmd cmd,
-                                uint32_t response_size)
+static void vigs_comm_cmd_done(struct vigs_comm *comm,
+                               vigsp_cmd cmd)
 {
     struct vigsp_cmd_request_header *request_header;
-    struct vigsp_cmd_response_header *response_header;
-    void *tmp;
 
     if (comm->cmd_size <= 0) {
-        return NULL;
+        return;
     }
 
     if (cmd != comm->cmd) {
         xf86DrvMsg(comm->screen->scrn->scrnIndex, X_ERROR, "Another command already in progress, logic error\n");
-        return NULL;
+        return;
     }
 
     if (comm->alloc_failed) {
         VIGS_LOG_ERROR("Allocation failed, not executing");
         comm->cmd_size = 0;
         comm->alloc_failed = 0;
-        return NULL;
+        return;
     }
 
     request_header = comm->cmd_ptr;
 
     request_header->cmd = comm->cmd;
+    request_header->size = comm->cmd_size - sizeof(*request_header);
 
-    tmp = vigs_comm_cmd_alloc(comm, response_size);
-
-    if (!tmp) {
-        comm->cmd_size = 0;
-        comm->alloc_failed = 0;
-        return NULL;
-    }
-
-    request_header->size = comm->cmd_size -
-                           sizeof(*request_header) -
-                           sizeof(*response_header) -
-                           response_size;
-
-    ++comm->cmd_count;
-    comm->cmd_ptr += comm->cmd_size - sizeof(*response_header) - response_size;
+    comm->cmd_ptr += comm->cmd_size;
     comm->cmd_size = 0;
-
-    if (response_size > 0) {
-        return vigs_comm_flush(comm) ? tmp : NULL;
-    } else {
-        return NULL;
-    }
 }
 
 Bool vigs_comm_create(struct vigs_screen *vigs_screen,
@@ -326,7 +327,6 @@ void vigs_comm_destroy(struct vigs_comm *comm)
 {
     VIGS_LOG_TRACE("enter");
 
-    free(comm->tmp_buff);
     if (comm->execbuffer) {
         vigs_drm_gem_unref(&comm->execbuffer->gem);
     }
@@ -336,72 +336,29 @@ void vigs_comm_destroy(struct vigs_comm *comm)
 Bool vigs_comm_flush(struct vigs_comm *comm)
 {
     struct vigsp_cmd_batch_header *batch_header;
-    struct vigsp_cmd_response_header *response_header;
     int ret;
-    Bool result = FALSE;
+    Bool result = TRUE;
 
-    if (comm->cmd_count <= 0) {
+    if (!vigs_comm_have_cmds(comm)) {
         return TRUE;
     }
 
-    if (comm->cmd_size > comm->tmp_buff_size) {
-        void *tmp_buff = malloc(comm->cmd_size);
-        if (tmp_buff) {
-            free(comm->tmp_buff);
-            comm->tmp_buff = tmp_buff;
-            comm->tmp_buff_size = comm->cmd_size;
-        }
-    }
-
-    if (comm->cmd_size <= comm->tmp_buff_size) {
-        /*
-         * Temporary copy incomplete command if tmp buffer is available.
-         */
-        memcpy(comm->tmp_buff, comm->cmd_ptr, comm->cmd_size);
-    }
-
     batch_header = comm->execbuffer->gem.vaddr;
-    response_header = comm->cmd_ptr;
 
-    batch_header->num_requests = comm->cmd_count;
-
-    memset(response_header, 0, sizeof(*response_header));
+    batch_header->fence_seq = 0;
+    batch_header->size = (comm->cmd_ptr -
+                          comm->execbuffer->gem.vaddr -
+                          sizeof(*batch_header));
 
     ret = vigs_drm_execbuffer_exec(comm->execbuffer);
-    if (ret == 0) {
-        switch (response_header->status) {
-        case vigsp_status_success:
-            result = TRUE;
-            break;
-        case vigsp_status_bad_call:
-            xf86DrvMsg(comm->screen->scrn->scrnIndex, X_ERROR, "Bad host call\n");
-            break;
-        case vigsp_status_exec_error:
-            xf86DrvMsg(comm->screen->scrn->scrnIndex, X_ERROR, "Host exec error\n");
-            break;
-        default:
-            xf86DrvMsg(comm->screen->scrn->scrnIndex, X_ERROR, "Fatal host exec error\n");
-            break;
-        }
-    } else {
+    if (ret != 0) {
         xf86DrvMsg(comm->screen->scrn->scrnIndex, X_ERROR, "Failed to execute execbuffer: %s\n", strerror(-ret));
+        result = FALSE;
     }
 
-    comm->cmd_count = 0;
+    memcpy(batch_header + 1, comm->cmd_ptr, comm->cmd_size);
+
     comm->cmd_ptr = batch_header + 1;
-
-    if (comm->cmd_size <= comm->tmp_buff_size) {
-        /*
-         * Copy incomplete command back.
-         */
-        memcpy(comm->cmd_ptr, comm->tmp_buff, comm->cmd_size);
-    } else if (comm->cmd_size > 0) {
-        /*
-         * tmp buffer allocation above failed, we're forced to
-         * fail current command.
-         */
-        comm->alloc_failed = 1;
-    }
 
     return result;
 }
@@ -421,7 +378,7 @@ void vigs_comm_update_vram(struct vigs_comm *comm,
 
     request->sfc_id = sfc_id;
 
-    vigs_comm_cmd_done(comm, vigsp_cmd_update_vram, 0);
+    vigs_comm_cmd_done(comm, vigsp_cmd_update_vram);
 }
 
 void vigs_comm_update_gpu(struct vigs_comm *comm,
@@ -452,7 +409,7 @@ void vigs_comm_update_gpu(struct vigs_comm *comm,
         request->entries[i].size.h = (entries[i].y2 - entries[i].y1);
     }
 
-    vigs_comm_cmd_done(comm, vigsp_cmd_update_gpu, 0);
+    vigs_comm_cmd_done(comm, vigsp_cmd_update_gpu);
 }
 
 void vigs_comm_copy_prepare(struct vigs_comm *comm,
@@ -504,7 +461,7 @@ void vigs_comm_copy(struct vigs_comm *comm,
 
 void vigs_comm_copy_done(struct vigs_comm *comm)
 {
-    vigs_comm_cmd_done(comm, vigsp_cmd_copy, 0);
+    vigs_comm_cmd_done(comm, vigsp_cmd_copy);
 }
 
 void vigs_comm_solid_fill_prepare(struct vigs_comm *comm,
@@ -556,5 +513,5 @@ void vigs_comm_solid_fill(struct vigs_comm *comm,
 
 void vigs_comm_solid_fill_done(struct vigs_comm *comm)
 {
-    vigs_comm_cmd_done(comm, vigsp_cmd_solid_fill, 0);
+    vigs_comm_cmd_done(comm, vigsp_cmd_solid_fill);
 }

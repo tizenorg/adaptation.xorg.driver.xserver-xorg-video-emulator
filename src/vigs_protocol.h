@@ -1,20 +1,49 @@
+/*
+ * X.Org X server driver for VIGS
+ *
+ * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Contact :
+ * Stanislav Vorobiov <s.vorobiov@samsung.com>
+ * Jinhyung Jo <jinhyung.jo@samsung.com>
+ * YeongKyoon Lee <yeongkyoon.lee@samsung.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Contributors:
+ * - S-Core Co., Ltd
+ *
+ */
+
 #ifndef _VIGS_PROTOCOL_H_
 #define _VIGS_PROTOCOL_H_
 
 /*
- * VIGS protocol is a multiple request-single response protocol.
- *
- * + Requests come batched.
- * + The response is written after the request batch.
- *
- * Not all commands can be batched, only commands that don't have response
- * data can be batched.
+ * VIGS protocol is a multiple request-no response protocol.
  */
 
 /*
  * Bump this whenever protocol changes.
  */
-#define VIGS_PROTOCOL_VERSION 14
+#define VIGS_PROTOCOL_VERSION 20
+
+#define VIGS_MAX_PLANES 2
 
 typedef signed char vigsp_s8;
 typedef signed short vigsp_s16;
@@ -29,36 +58,62 @@ typedef vigsp_u32 vigsp_bool;
 typedef vigsp_u32 vigsp_surface_id;
 typedef vigsp_u32 vigsp_offset;
 typedef vigsp_u32 vigsp_color;
-
-typedef enum
-{
-    vigsp_cmd_init = 0x0,
-    vigsp_cmd_reset = 0x1,
-    vigsp_cmd_exit = 0x2,
-    vigsp_cmd_create_surface = 0x3,
-    vigsp_cmd_destroy_surface = 0x4,
-    vigsp_cmd_set_root_surface = 0x5,
-    vigsp_cmd_update_vram = 0x6,
-    vigsp_cmd_update_gpu = 0x7,
-    vigsp_cmd_copy = 0x8,
-    vigsp_cmd_solid_fill = 0x9,
-} vigsp_cmd;
+typedef vigsp_u32 vigsp_fence_seq;
 
 typedef enum
 {
     /*
-     * Start from 0x1 to detect host failures on target.
+     * These command are guaranteed to sync on host, i.e.
+     * no fence is required.
+     * @{
      */
-    vigsp_status_success = 0x1,
-    vigsp_status_bad_call = 0x2,
-    vigsp_status_exec_error = 0x3,
-} vigsp_status;
+    vigsp_cmd_init = 0x0,
+    vigsp_cmd_reset = 0x1,
+    vigsp_cmd_exit = 0x2,
+    vigsp_cmd_set_root_surface = 0x3,
+    /*
+     * @}
+     */
+    /*
+     * These commands are executed asynchronously.
+     * @{
+     */
+    vigsp_cmd_create_surface = 0x4,
+    vigsp_cmd_destroy_surface = 0x5,
+    vigsp_cmd_update_vram = 0x6,
+    vigsp_cmd_update_gpu = 0x7,
+    vigsp_cmd_copy = 0x8,
+    vigsp_cmd_solid_fill = 0x9,
+    vigsp_cmd_set_plane = 0xA,
+    vigsp_cmd_ga_copy = 0xB
+    /*
+     * @}
+     */
+} vigsp_cmd;
 
 typedef enum
 {
     vigsp_surface_bgrx8888 = 0x0,
     vigsp_surface_bgra8888 = 0x1,
 } vigsp_surface_format;
+
+typedef enum
+{
+    vigsp_plane_bgrx8888 = 0x0,
+    vigsp_plane_bgra8888 = 0x1,
+    vigsp_plane_nv21 = 0x2,
+    vigsp_plane_nv42 = 0x3,
+    vigsp_plane_nv61 = 0x4,
+    vigsp_plane_yuv420 = 0x5
+} vigsp_plane_format;
+
+typedef enum
+{
+    vigsp_rotation0   = 0x0,
+    vigsp_rotation90  = 0x1,
+    vigsp_rotation180 = 0x2,
+    vigsp_rotation270 = 0x3
+} vigsp_rotation;
 
 #pragma pack(1)
 
@@ -89,7 +144,17 @@ struct vigsp_copy
 
 struct vigsp_cmd_batch_header
 {
-    vigsp_u32 num_requests;
+    /*
+     * Fence sequence requested by this batch.
+     * 0 for none.
+     */
+    vigsp_fence_seq fence_seq;
+
+    /*
+     * Batch size starting from batch header.
+     * Can be 0.
+     */
+    vigsp_u32 size;
 };
 
 struct vigsp_cmd_request_header
@@ -100,11 +165,6 @@ struct vigsp_cmd_request_header
      * Request size starting from request header.
      */
     vigsp_u32 size;
-};
-
-struct vigsp_cmd_response_header
-{
-    vigsp_status status;
 };
 
 /*
@@ -121,10 +181,6 @@ struct vigsp_cmd_response_header
 struct vigsp_cmd_init_request
 {
     vigsp_u32 client_version;
-};
-
-struct vigsp_cmd_init_response
-{
     vigsp_u32 server_version;
 };
 
@@ -198,8 +254,8 @@ struct vigsp_cmd_destroy_surface_request
  * cmd_set_root_surface
  *
  * Sets surface identified by 'id' as new root surface. Root surface is the
- * one that's displayed on screen. Root surface must reside in VRAM
- * all the time, pass 'offset' in VRAM here.
+ * one that's displayed on screen. Root surface resides in VRAM
+ * all the time if 'scanout' is true.
  *
  * Pass 0 as id in order to reset the root surface.
  *
@@ -209,6 +265,7 @@ struct vigsp_cmd_destroy_surface_request
 struct vigsp_cmd_set_root_surface_request
 {
     vigsp_surface_id id;
+    vigsp_bool scanout;
     vigsp_offset offset;
 };
 
@@ -289,6 +346,62 @@ struct vigsp_cmd_solid_fill_request
     vigsp_color color;
     vigsp_u32 num_entries;
     struct vigsp_rect entries[0];
+};
+
+/*
+ * @}
+ */
+
+/*
+ * cmd_set_plane
+ *
+ * Assigns surfaces 'surfaces' to plane identified by 'plane'.
+ *
+ * Pass 0 as surfaces[0] in order to disable the plane.
+ *
+ * @{
+ */
+
+struct vigsp_cmd_set_plane_request
+{
+    vigsp_u32 plane;
+    vigsp_u32 width;
+    vigsp_u32 height;
+    vigsp_plane_format format;
+    vigsp_surface_id surfaces[4];
+    struct vigsp_rect src_rect;
+    vigsp_s32 dst_x;
+    vigsp_s32 dst_y;
+    struct vigsp_size dst_size;
+    vigsp_s32 z_pos;
+    vigsp_bool hflip;
+    vigsp_bool vflip;
+    vigsp_rotation rotation;
+};
+
+/*
+ * @}
+ */
+
+/*
+ * cmd_ga_copy
+ *
+ * Copies part of surface 'src_id' to
+ * surface 'dst_id' given surface
+ * sizes.
+ *
+ * @{
+ */
+
+struct vigsp_cmd_ga_copy_request
+{
+    vigsp_surface_id src_id;
+    vigsp_bool src_scanout;
+    vigsp_offset src_offset;
+    vigsp_u32 src_stride;
+    vigsp_surface_id dst_id;
+    vigsp_u32 dst_stride;
+    struct vigsp_copy entry;
 };
 
 /*

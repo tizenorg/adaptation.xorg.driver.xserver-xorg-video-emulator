@@ -1,9 +1,42 @@
+/*
+ * X.Org X server driver for VIGS
+ *
+ * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Contact :
+ * Stanislav Vorobiov <s.vorobiov@samsung.com>
+ * Jinhyung Jo <jinhyung.jo@samsung.com>
+ * YeongKyoon Lee <yeongkyoon.lee@samsung.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Contributors:
+ * - S-Core Co., Ltd
+ *
+ */
+
 #include "vigs_screen.h"
 #include "vigs_log.h"
 #include "vigs_drm.h"
 #include "vigs_uxa.h"
 #include "vigs_dri2.h"
-#include "vigs_video.h"
+#include "vigs_xv.h"
 #include "vigs_drm_crtc.h"
 #include "vigs_pixmap.h"
 #include "vigs_comm.h"
@@ -55,6 +88,110 @@ out:
     drmModeFreeFB(drm_fb);
 
     return sfc;
+}
+
+static void vigs_screen_copy_fb(struct vigs_screen *vigs_screen)
+{
+    ScrnInfoPtr scrn = vigs_screen->scrn;
+    xf86CrtcConfigPtr crtc_config = XF86_CRTC_CONFIG_PTR(scrn);
+    int i, ret;
+    struct vigs_drm_surface *fb_sfc = NULL;
+    uint8_t *buff = NULL;
+
+    for (i = 0; i < crtc_config->num_crtc; ++i) {
+        struct vigs_drm_crtc *crtc = crtc_config->crtc[i]->driver_private;
+        if (crtc->mode_crtc->buffer_id) {
+            fb_sfc = vigs_screen_surface_open(vigs_screen,
+                                              crtc->mode_crtc->buffer_id);
+
+            /*
+             * We opened fbcon DRM surface, if its format matches
+             * that of 'front_sfc', then copy it to 'front_sfc'.
+             */
+
+            if (fb_sfc &&
+                (fb_sfc->stride == vigs_screen->front_sfc->stride) &&
+                (fb_sfc->height == vigs_screen->front_sfc->height)) {
+                ret = vigs_drm_gem_map(&fb_sfc->gem, 0);
+
+                if (ret != 0) {
+                    xf86DrvMsg(scrn->scrnIndex, X_ERROR,
+                               "Unable to map fbcon GEM: %s\n",
+                               strerror(-ret));
+                    break;
+                }
+
+                buff = malloc(fb_sfc->stride * fb_sfc->height);
+
+                if (!buff) {
+                    xf86DrvMsg(scrn->scrnIndex, X_ERROR,
+                               "Unable to allocate %d bytes\n",
+                               fb_sfc->stride * fb_sfc->height);
+                    break;
+                }
+
+                memcpy(buff, fb_sfc->gem.vaddr, fb_sfc->stride * fb_sfc->height);
+            }
+
+            break;
+        }
+    }
+
+    if (fb_sfc) {
+        vigs_drm_gem_unref(&fb_sfc->gem);
+    }
+
+    if (!buff) {
+        /*
+         * No fbcon DRM surface or format mismatch, just fill
+         * 'front_sfc' with 0.
+         */
+
+        buff = malloc(vigs_screen->front_sfc->stride * vigs_screen->front_sfc->height);
+
+        if (buff) {
+            memset(buff, 0, vigs_screen->front_sfc->stride * vigs_screen->front_sfc->height);
+        } else {
+            xf86DrvMsg(scrn->scrnIndex, X_ERROR,
+                       "Unable to allocate %d bytes\n",
+                       vigs_screen->front_sfc->stride * vigs_screen->front_sfc->height);
+            return;
+        }
+    }
+
+    ret = vigs_drm_gem_map(&vigs_screen->front_sfc->gem, 1);
+
+    if (ret != 0) {
+        xf86DrvMsg(scrn->scrnIndex, X_ERROR,
+                   "Unable to map FB GEM: %s\n",
+                   strerror(-ret));
+        goto out1;
+    }
+
+    ret = vigs_drm_surface_start_access(vigs_screen->front_sfc,
+                                        VIGS_DRM_SAF_WRITE);
+
+    if (ret != 0) {
+        xf86DrvMsg(scrn->scrnIndex, X_ERROR,
+                   "Unable to start FB GEM access: %s\n", strerror(-ret));
+        goto out2;
+    }
+
+    memcpy(vigs_screen->front_sfc->gem.vaddr,
+           buff,
+           vigs_screen->front_sfc->stride * vigs_screen->front_sfc->height);
+
+    ret = vigs_drm_surface_end_access(vigs_screen->front_sfc, 1);
+
+    if (ret != 0) {
+        xf86DrvMsg(scrn->scrnIndex, X_ERROR,
+                   "Unable to end FB GEM access: %s\n", strerror(-ret));
+    }
+
+out2:
+    vigs_drm_gem_unmap(&vigs_screen->front_sfc->gem);
+out1:
+    free(buff);
 }
 
 static Bool vigs_screen_pre_init_visual(ScrnInfoPtr scrn)
@@ -152,6 +289,18 @@ static Bool vigs_screen_create_resources(ScreenPtr screen)
     }
 }
 
+static void vigs_flush_handler(CallbackListPtr *callback_list,
+                               pointer data,
+                               pointer call_data)
+{
+    ScrnInfoPtr scrn = data;
+    struct vigs_screen *vigs_screen = scrn->driverPrivate;
+
+    if (scrn->vtSema && !vigs_screen->no_accel) {
+        vigs_uxa_flush(vigs_screen);
+    }
+}
+
 static Bool vigs_screen_close(CLOSE_SCREEN_ARGS_DECL)
 {
     ScrnInfoPtr scrn = xf86ScreenToScrn(screen);
@@ -164,7 +313,9 @@ static Bool vigs_screen_close(CLOSE_SCREEN_ARGS_DECL)
         return TRUE;
     }
 
-    vigs_video_close(vigs_screen);
+    DeleteCallback(&FlushCallback, vigs_flush_handler, scrn);
+
+    vigs_xv_close(vigs_screen);
 
     if (!vigs_screen->no_accel) {
         vigs_uxa_close(vigs_screen);
@@ -279,18 +430,12 @@ Bool vigs_screen_pre_init(ScrnInfoPtr scrn, int flags)
             g_vigs_options[vigs_option_max_execbuffer_size].value.num;
     }
 
-    vigs_screen->steal_fb = xf86ReturnOptValBool(vigs_screen->options,
-                                                 vigs_option_steal_fb,
-                                                 g_vigs_options[vigs_option_steal_fb].value.num);
-
     vigs_screen->no_accel = xf86ReturnOptValBool(vigs_screen->options,
                                                  vigs_option_no_accel,
                                                  g_vigs_options[vigs_option_no_accel].value.num);
 
     xf86DrvMsg(scrn->scrnIndex, X_INFO, "Max Execbuffer Size: %u\n",
                vigs_screen->max_execbuffer_size);
-    xf86DrvMsg(scrn->scrnIndex, X_INFO, "Steal Framebuffer: %s\n",
-               (vigs_screen->steal_fb ? "Yes" : "No"));
     xf86DrvMsg(scrn->scrnIndex, X_INFO, "No accel: %s\n",
                (vigs_screen->no_accel ? "Yes" : "No"));
 
@@ -352,6 +497,8 @@ Bool vigs_screen_init(SCREEN_INIT_ARGS_DECL)
     struct vigs_screen *vigs_screen = scrn->driverPrivate;
     VisualPtr visual;
     int ret = FALSE;
+    vigsp_surface_format format;
+    uint32_t bpp;
 
     VIGS_LOG_TRACE("scrn_index = %d, argc = %d", scrn->scrnIndex, argc);
 
@@ -380,75 +527,47 @@ Bool vigs_screen_init(SCREEN_INIT_ARGS_DECL)
         return FALSE;
     }
 
-    if (vigs_screen->steal_fb) {
-        xf86CrtcConfigPtr crtc_config = XF86_CRTC_CONFIG_PTR(scrn);
-        int i;
+    bpp = (scrn->bitsPerPixel + 7) / 8;
 
-        for (i = 0; i < crtc_config->num_crtc; ++i) {
-            struct vigs_drm_crtc *crtc = crtc_config->crtc[i]->driver_private;
-            if (crtc->mode_crtc->buffer_id) {
-                vigs_screen->front_sfc =
-                    vigs_screen_surface_open(vigs_screen,
-                                             crtc->mode_crtc->buffer_id);
-                if (vigs_screen->front_sfc) {
-                    /*
-                     * We opened fbcon DRM surface, if its format matches
-                     * that of our screen, then steal it.
-                     */
-
-                    if ((vigs_screen->front_sfc->width != (uint32_t)scrn->virtualX) ||
-                        (vigs_screen->front_sfc->height != (uint32_t)scrn->virtualY)) {
-                        vigs_drm_gem_unref(&vigs_screen->front_sfc->gem);
-                        vigs_screen->front_sfc = NULL;
-                    }
-                }
-
-                break;
-            }
-        }
+    if (bpp != 4) {
+        xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Only 32 bpp surfaces are supported for now\n");
+        return FALSE;
     }
 
-    if (!vigs_screen->front_sfc) {
-        vigsp_surface_format format;
-        uint32_t bpp = (scrn->bitsPerPixel + 7) / 8;
+    switch (scrn->depth) {
+    case 24:
+        format = vigsp_surface_bgrx8888;
+        break;
+    case 32:
+        format = vigsp_surface_bgra8888;
+        break;
+    default:
+        xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Only 24 and 32 depth surfaces are supported for now\n");
+        return FALSE;
+    }
 
-        if (bpp != 4) {
-            xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Only 32 bpp surfaces are supported for now\n");
-            return FALSE;
-        }
+    VIGS_LOG_TRACE("Allocating front surface %ux%ux%u, depth = %u",
+                   (uint32_t)scrn->virtualX,
+                   (uint32_t)scrn->virtualY,
+                   bpp,
+                   (uint32_t)scrn->depth);
 
-        switch (scrn->depth) {
-        case 24:
-            format = vigsp_surface_bgrx8888;
-            break;
-        case 32:
-            format = vigsp_surface_bgra8888;
-            break;
-        default:
-            xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Only 24 and 32 depth surfaces are supported for now\n");
-            return FALSE;
-        }
+    ret = vigs_drm_surface_create(vigs_screen->drm->dev,
+                                  scrn->virtualX,
+                                  scrn->virtualY,
+                                  ((uint32_t)scrn->virtualX * bpp),
+                                  format,
+                                  vigs_screen->no_accel,
+                                  &vigs_screen->front_sfc);
 
-        VIGS_LOG_TRACE("Allocating front surface %ux%ux%u, depth = %u",
-                       (uint32_t)scrn->virtualX,
-                       (uint32_t)scrn->virtualY,
-                       bpp,
-                       (uint32_t)scrn->depth);
-
-        ret = vigs_drm_surface_create(vigs_screen->drm->dev,
-                                      scrn->virtualX,
-                                      scrn->virtualY,
-                                      ((uint32_t)scrn->virtualX * bpp),
-                                      format,
-                                      &vigs_screen->front_sfc);
-
-        if (ret != 0) {
-            xf86DrvMsg(vigs_screen->scrn->scrnIndex, X_ERROR, "Unable to create FB surface: %s\n", strerror(-ret));
-            return FALSE;
-        }
+    if (ret != 0) {
+        xf86DrvMsg(vigs_screen->scrn->scrnIndex, X_ERROR, "Unable to create FB surface: %s\n", strerror(-ret));
+        return FALSE;
     }
 
     scrn->displayWidth = scrn->virtualX;
+
+    vigs_screen_copy_fb(vigs_screen);
 
     /*
      * Reset visuals.
@@ -536,6 +655,8 @@ Bool vigs_screen_init(SCREEN_INIT_ARGS_DECL)
     vigs_screen->block_handler_fn = screen->BlockHandler;
     screen->BlockHandler = vigs_block_handler;
 
+    AddCallback(&FlushCallback, vigs_flush_handler, scrn);
+
     if (!xf86CrtcScreenInit(screen)) {
         return FALSE;
     }
@@ -552,7 +673,7 @@ Bool vigs_screen_init(SCREEN_INIT_ARGS_DECL)
         xf86ShowUnusedOptions(scrn->scrnIndex, scrn->options);
     }
 
-    if (!vigs_video_init(vigs_screen)) {
+    if (!vigs_xv_init(vigs_screen)) {
         xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Xv init failed\n");
         return FALSE;
     }

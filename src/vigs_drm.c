@@ -1,6 +1,40 @@
+/*
+ * X.Org X server driver for VIGS
+ *
+ * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Contact :
+ * Stanislav Vorobiov <s.vorobiov@samsung.com>
+ * Jinhyung Jo <jinhyung.jo@samsung.com>
+ * YeongKyoon Lee <yeongkyoon.lee@samsung.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Contributors:
+ * - S-Core Co., Ltd
+ *
+ */
+
 #include "vigs_drm.h"
 #include "vigs_drm_crtc.h"
 #include "vigs_drm_output.h"
+#include "vigs_drm_plane.h"
 #include "vigs_screen.h"
 #include "vigs_log.h"
 #include "vigs_dri2.h"
@@ -143,7 +177,16 @@ Bool vigs_drm_pre_init(struct vigs_screen *vigs_screen,
         return FALSE;
     }
 
-    xf86CrtcSetSizeRange(scrn, 320, 200,
+    drm->plane_res = drmModeGetPlaneResources(drm->fd);
+
+    if (!drm->plane_res) {
+        xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Unable to get DRM plane resources\n");
+        return FALSE;
+    }
+
+    vigs_list_init(&drm->planes);
+
+    xf86CrtcSetSizeRange(scrn, 80, 50,
                          drm->mode_res->max_width,
                          drm->mode_res->max_height);
 
@@ -157,6 +200,13 @@ Bool vigs_drm_pre_init(struct vigs_screen *vigs_screen,
     for (i = 0; i < drm->mode_res->count_connectors; i++) {
         if (!vigs_drm_output_init(drm, i)) {
             xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Unable to init output %d\n", i);
+            return FALSE;
+        }
+    }
+
+    for (i = 0; i < (int)drm->plane_res->count_planes; i++) {
+        if (!vigs_drm_plane_init(drm, i)) {
+            xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Unable to init plane %d\n", i);
             return FALSE;
         }
     }
@@ -229,6 +279,16 @@ void vigs_drm_close(struct vigs_screen *vigs_screen)
 
 void vigs_drm_free(struct vigs_screen *vigs_screen)
 {
+    struct vigs_drm_plane *plane, *next;
+
+    vigs_list_for_each_safe(struct vigs_drm_plane,
+                            plane,
+                            next,
+                            &vigs_screen->drm->planes,
+                            list) {
+        vigs_drm_plane_destroy(plane);
+    }
+
     vigs_drm_device_destroy(vigs_screen->drm->dev);
     vigs_screen->drm->dev = NULL;
 

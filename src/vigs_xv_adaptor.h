@@ -31,23 +31,18 @@
  *
  */
 
-#include "vigs_options.h"
+#ifndef _VIGS_XV_ADAPTOR_H_
+#define _VIGS_XV_ADAPTOR_H_
 
-const OptionInfoRec g_vigs_options[vigs_option_count + 1] =
+#include "vigs_config.h"
+#include "xf86.h"
+#include "xf86xv.h"
+
+struct vigs_xv_adaptor
 {
-    {
-        vigs_option_max_execbuffer_size,
-        "MaxExecbufferSize",
-        OPTV_INTEGER,
-        { 100000 },
-        FALSE
-    },
-    {
-        vigs_option_no_accel,
-        "NoAccel",
-        OPTV_BOOLEAN,
-        { 0 },
-        FALSE
-    },
-    { -1, NULL, OPTV_NONE, {0}, FALSE }
+    XF86VideoAdaptorRec base;
+
+    void (*destroy)(struct vigs_xv_adaptor */*adaptor*/);
 };
+
+#endif
