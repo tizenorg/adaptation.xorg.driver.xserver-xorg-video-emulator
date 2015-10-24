@@ -38,7 +38,7 @@
 #include "xf86.h"
 #include "xf86xv.h"
 
-#define VIGS_NUM_XV_ADAPTORS 2
+#define VIGS_NUM_XV_ADAPTORS 3
 
 struct vigs_screen;
 struct vigs_xv_overlay;

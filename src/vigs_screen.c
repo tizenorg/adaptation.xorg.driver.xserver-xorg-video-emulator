@@ -36,8 +36,11 @@
 #include "vigs_drm.h"
 #include "vigs_uxa.h"
 #include "vigs_dri2.h"
+#include "vigs_dri3.h"
+#include "vigs_present.h"
 #include "vigs_xv.h"
 #include "vigs_drm_crtc.h"
+#include "vigs_cursor.h"
 #include "vigs_pixmap.h"
 #include "vigs_comm.h"
 #include "vigs.h"
@@ -194,6 +197,51 @@ out1:
     free(buff);
 }
 
+xf86CrtcPtr vigs_screen_covering_crtc(ScrnInfoPtr scrn,
+                                      BoxPtr box,
+                                      xf86CrtcPtr desired,
+                                      BoxPtr crtc_box_ret)
+{
+    xf86CrtcConfigPtr crtc_config = XF86_CRTC_CONFIG_PTR(scrn);
+    xf86CrtcPtr crtc, best_crtc;
+    int coverage, best_coverage;
+    int c;
+    BoxRec crtc_box, cover_box;
+
+    best_crtc = NULL;
+    best_coverage = 0;
+    crtc_box_ret->x1 = 0;
+    crtc_box_ret->x2 = 0;
+    crtc_box_ret->y1 = 0;
+    crtc_box_ret->y2 = 0;
+
+    for (c = 0; c < crtc_config->num_crtc; c++) {
+        crtc = crtc_config->crtc[c];
+
+        /* If the CRTC is off, treat it as not covering */
+        if (!vigs_drm_crtc_is_on(crtc)) {
+            continue;
+        }
+
+        vigs_crtc_box(crtc, &crtc_box);
+        vigs_box_intersect(&cover_box, &crtc_box, box);
+        coverage = vigs_box_area(&cover_box);
+
+        if (coverage && crtc == desired) {
+            *crtc_box_ret = crtc_box;
+            return crtc;
+        }
+
+        if (coverage > best_coverage) {
+            *crtc_box_ret = crtc_box;
+            best_crtc = crtc;
+            best_coverage = coverage;
+        }
+    }
+
+    return best_crtc;
+}
+
 static Bool vigs_screen_pre_init_visual(ScrnInfoPtr scrn)
 {
     Gamma gzeros = { 0.0, 0.0, 0.0 };
@@ -320,6 +368,11 @@ static Bool vigs_screen_close(CLOSE_SCREEN_ARGS_DECL)
     if (!vigs_screen->no_accel) {
         vigs_uxa_close(vigs_screen);
 
+        if (vigs_screen->dri3) {
+            vigs_present_close(vigs_screen);
+            vigs_dri3_close(vigs_screen);
+        }
+
         vigs_dri2_close(vigs_screen);
     }
 
@@ -333,7 +386,7 @@ static Bool vigs_screen_close(CLOSE_SCREEN_ARGS_DECL)
         scrn->vtSema = FALSE;
     }
 
-    xf86_cursors_fini(screen);
+    vigs_cursor_close(vigs_screen);
 
     screen->CloseScreen = vigs_screen->close_screen_fn;
     screen->CreateScreenResources = vigs_screen->create_screen_resources_fn;
@@ -433,11 +486,22 @@ Bool vigs_screen_pre_init(ScrnInfoPtr scrn, int flags)
     vigs_screen->no_accel = xf86ReturnOptValBool(vigs_screen->options,
                                                  vigs_option_no_accel,
                                                  g_vigs_options[vigs_option_no_accel].value.num);
+    vigs_screen->hwcursor = xf86ReturnOptValBool(vigs_screen->options,
+                                                 vigs_option_hwcursor,
+                                                 g_vigs_options[vigs_option_hwcursor].value.num);
+
+    vigs_screen->dri3 = xf86ReturnOptValBool(vigs_screen->options,
+                                             vigs_option_dri3,
+                                             g_vigs_options[vigs_option_dri3].value.num);
 
     xf86DrvMsg(scrn->scrnIndex, X_INFO, "Max Execbuffer Size: %u\n",
                vigs_screen->max_execbuffer_size);
     xf86DrvMsg(scrn->scrnIndex, X_INFO, "No accel: %s\n",
                (vigs_screen->no_accel ? "Yes" : "No"));
+    xf86DrvMsg(scrn->scrnIndex, X_INFO, "HW Cursor: %s\n",
+               (vigs_screen->hwcursor ? "Yes" : "No"));
+    xf86DrvMsg(scrn->scrnIndex, X_INFO, "DRI3: %s\n",
+               (vigs_screen->dri3 ? "Yes" : "No"));
 
     scrn->progClock = TRUE;
 
@@ -481,6 +545,12 @@ Bool vigs_screen_pre_init(ScrnInfoPtr scrn, int flags)
     if (!vigs_screen->no_accel &&
         !xf86LoadSubModule(scrn, "dri2")) {
         xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Unable to load \"dri2\" submodule\n");
+        return FALSE;
+    }
+
+    if (!vigs_screen->no_accel && vigs_screen->dri3 &&
+        !xf86LoadSubModule(scrn, "dri3")) {
+        xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Unable to load \"dri3\" submodule\n");
         return FALSE;
     }
 
@@ -625,21 +695,26 @@ Bool vigs_screen_init(SCREEN_INIT_ARGS_DECL)
         return FALSE;
     }
 
-    miInitializeBackingStore(screen);
+    if (!vigs_screen->no_accel && vigs_screen->dri3 &&
+        !vigs_dri3_init(vigs_screen)) {
+        xf86DrvMsg(scrn->scrnIndex, X_ERROR, "DRI3 init failed\n");
+        return FALSE;
+    }
+
+    if (!vigs_screen->no_accel && vigs_screen->dri3 &&
+        !vigs_present_init(vigs_screen)) {
+        xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Present init failed\n");
+        return FALSE;
+    }
+
     xf86SetBackingStore(screen);
     xf86SetSilkenMouse(screen);
 
     miDCInitialize(screen, xf86GetPointerScreenFuncs());
 
-    if (!xf86_cursors_init(screen, 64, 64, (HARDWARE_CURSOR_TRUECOLOR_AT_8BPP |
-                                            HARDWARE_CURSOR_BIT_ORDER_MSBFIRST |
-                                            HARDWARE_CURSOR_INVERT_MASK |
-                                            HARDWARE_CURSOR_SWAP_SOURCE_AND_MASK |
-                                            HARDWARE_CURSOR_AND_SOURCE_WITH_MASK |
-                                            HARDWARE_CURSOR_SOURCE_MASK_INTERLEAVE_64 |
-                                            HARDWARE_CURSOR_UPDATE_UNHIDDEN |
-                                            HARDWARE_CURSOR_ARGB))) {
-        xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Unable to initialize hardware cursor\n");
+    if (vigs_screen->hwcursor &&
+        !vigs_cursor_init(vigs_screen)) {
+        xf86DrvMsg(scrn->scrnIndex, X_ERROR, "HW Cursor init failed\n");
     }
 
     scrn->vtSema = TRUE;

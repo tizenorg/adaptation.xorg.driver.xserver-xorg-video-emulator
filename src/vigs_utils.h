@@ -83,4 +83,8 @@ void *vigs_copy_image(int width, int height,
                       int *d_pitches, int *d_offsets, int *d_lengths,
                       int channel, int h_sampling, int v_sampling);
 
+void vigs_box_intersect(BoxPtr dest, BoxPtr a, BoxPtr b);
+void vigs_crtc_box(xf86CrtcPtr crtc, BoxPtr crtc_box);
+int vigs_box_area(BoxPtr box);
+
 #endif

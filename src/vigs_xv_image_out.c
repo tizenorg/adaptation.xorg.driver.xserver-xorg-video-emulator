@@ -707,7 +707,7 @@ static int vigs_xv_image_out_put_image_on_overlay(ScrnInfoPtr scrn,
     }
 
     if (!vigs_xv_overlay_update(xv->overlays[port->overlay_index],
-                                &pxm_rect, dst_rect, 0,
+                                &pxm_rect, dst_rect, -1,
                                 port->is_hflip, port->is_vflip,
                                 (hw_rotation + 360) / 90 % 4)) {
         return BadRequest;

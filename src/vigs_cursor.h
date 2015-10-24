@@ -1,12 +1,12 @@
 /*
  * X.Org X server driver for VIGS
  *
- * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
+ * Copyright (c) 2014 Samsung Electronics Co., Ltd. All rights reserved.
  *
  * Contact :
- * Stanislav Vorobiov <s.vorobiov@samsung.com>
+ * Vasiliy Ulyanov<v.ulyanov@samsung.com>
  * Jinhyung Jo <jinhyung.jo@samsung.com>
- * YeongKyoon Lee <yeongkyoon.lee@samsung.com>
+ * Sangho Park <sangho1206.park@samsung.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -31,37 +31,37 @@
  *
  */
 
-#include "vigs_options.h"
+#ifndef _VIGS_CURSOR_H_
+#define _VIGS_CURSOR_H_
 
-const OptionInfoRec g_vigs_options[vigs_option_count + 1] =
-{
-    {
-        vigs_option_max_execbuffer_size,
-        "MaxExecbufferSize",
-        OPTV_INTEGER,
-        { 100000 },
-        FALSE
-    },
-    {
-        vigs_option_hwcursor,
-        "HWCursor",
-        OPTV_BOOLEAN,
-        { 0 },
-        FALSE
-    },
-    {
-        vigs_option_no_accel,
-        "NoAccel",
-        OPTV_BOOLEAN,
-        { 0 },
-        FALSE
-    },
-    {
-        vigs_option_dri3,
-        "dri3",
-        OPTV_BOOLEAN,
-        { 0 },
-        FALSE
-    },
-    { -1, NULL, OPTV_NONE, {0}, FALSE }
+#include "vigs_config.h"
+#include "xf86.h"
+
+struct vigs_screen;
+struct vigs_xv_overlay;
+
+struct vigs_cursor {
+    /* Screen on which the cursor is on */
+    struct vigs_screen *screen;
+
+    /* Cursor overlay */
+    struct vigs_xv_overlay *overlay;
+
+    /* DRM surface for the cursor */
+    struct vigs_drm_surface *sfc;
+
+    /* Current cursor position */
+    int x;
+    int y;
 };
+
+Bool vigs_cursor_init(struct vigs_screen *vigs_screen);
+void vigs_cursor_close(struct vigs_screen *vigs_screen);
+
+void vigs_cursor_load_argb(struct vigs_cursor *cursor, void *image);
+void vigs_cursor_set_position(struct vigs_cursor *cursor, int x, int y,
+                              int update);
+void vigs_cursor_show(struct vigs_cursor *cursor);
+void vigs_cursor_hide(struct vigs_cursor *cursor);
+
+#endif

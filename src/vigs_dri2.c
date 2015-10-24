@@ -465,8 +465,10 @@ static Bool vigs_dri2_schedule_flip(DrawablePtr drawable,
     frame_event->type = vigs_dri2_swap;
 
     if (!vigs_drm_pageflip(vigs_screen->drm,
+                           vigs_pixmap->sfc,
                            frame_event,
-                           vigs_pixmap->sfc)) {
+                           (vigs_drm_handler_proc)vigs_dri2_page_flip_handler,
+                           NULL)) {
         return FALSE;
     }
 
@@ -752,6 +754,7 @@ static int vigs_dri2_schedule_swap(ClientPtr client,
     ScrnInfoPtr scrn = xf86ScreenToScrn(drawable->pScreen);
     struct vigs_screen *vigs_screen = scrn->driverPrivate;
     struct vigs_dri2_frame_event *frame_event = NULL;
+    struct vigs_drm_queue *q = NULL;
     drmVBlank vbl;
     int ret;
     CARD64 current_msc;
@@ -785,6 +788,16 @@ static int vigs_dri2_schedule_swap(ClientPtr client,
 
     if (!frame_event) {
         xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Cannot allocate frame event\n");
+        goto fallback;
+    }
+
+    q = vigs_drm_queue_alloc(vigs_screen->drm,
+                             frame_event,
+                             (vigs_drm_handler_proc)vigs_dri2_vblank_handler,
+                             NULL);
+
+    if (!q) {
+        xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Cannot allocate queue item\n");
         goto fallback;
     }
 
@@ -879,7 +892,7 @@ static int vigs_dri2_schedule_swap(ClientPtr client,
         }
 
         vbl.request.sequence = *target_msc;
-        vbl.request.signal = (unsigned long)frame_event;
+        vbl.request.signal = (unsigned long)q;
 
         ret = drmWaitVBlank(vigs_screen->drm->fd, &vbl);
 
@@ -926,7 +939,7 @@ static int vigs_dri2_schedule_swap(ClientPtr client,
      * Account for 1 frame extra pageflip delay if flip > 0.
      */
     vbl.request.sequence -= flip;
-    vbl.request.signal = (unsigned long)frame_event;
+    vbl.request.signal = (unsigned long)q;
 
     ret = drmWaitVBlank(vigs_screen->drm->fd, &vbl);
 
@@ -951,6 +964,10 @@ fallback:
     vigs_dri2_send_sync_draw_done(drawable->pScreen,
                                   client,
                                   drawable);
+
+    if (q) {
+        vigs_drm_queue_abort_one(q);
+    }
 
     if (frame_event) {
         vigs_dri2_client_remove_frame_event(frame_event);
@@ -1017,6 +1034,7 @@ static int vigs_dri2_schedule_wait_msc(ClientPtr client,
     ScrnInfoPtr scrn = xf86ScreenToScrn(drawable->pScreen);
     struct vigs_screen *vigs_screen = scrn->driverPrivate;
     struct vigs_dri2_frame_event *frame_event = NULL;
+    struct vigs_drm_queue *q = NULL;
     drmVBlank vbl;
     int ret;
     CARD64 current_msc;
@@ -1045,6 +1063,16 @@ static int vigs_dri2_schedule_wait_msc(ClientPtr client,
 
     if (!frame_event) {
         xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Cannot allocate frame event\n");
+        goto complete;
+    }
+
+    q = vigs_drm_queue_alloc(vigs_screen->drm,
+                             frame_event,
+                             (vigs_drm_handler_proc)vigs_dri2_vblank_handler,
+                             NULL);
+
+    if (!q) {
+        xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Cannot allocate queue item\n");
         goto complete;
     }
 
@@ -1094,7 +1122,7 @@ static int vigs_dri2_schedule_wait_msc(ClientPtr client,
         }
         vbl.request.type = DRM_VBLANK_ABSOLUTE | DRM_VBLANK_EVENT;
         vbl.request.sequence = target_msc;
-        vbl.request.signal = (unsigned long)frame_event;
+        vbl.request.signal = (unsigned long)q;
 
         ret = drmWaitVBlank(vigs_screen->drm->fd, &vbl);
 
@@ -1127,7 +1155,7 @@ static int vigs_dri2_schedule_wait_msc(ClientPtr client,
         vbl.request.sequence += divisor;
     }
 
-    vbl.request.signal = (unsigned long)frame_event;
+    vbl.request.signal = (unsigned long)q;
 
     ret = drmWaitVBlank(vigs_screen->drm->fd, &vbl);
 
@@ -1143,6 +1171,10 @@ static int vigs_dri2_schedule_wait_msc(ClientPtr client,
     return TRUE;
 
 complete:
+    if (q) {
+        vigs_drm_queue_abort_one(q);
+    }
+
     if (frame_event) {
         vigs_dri2_client_remove_frame_event(frame_event);
         free(frame_event);

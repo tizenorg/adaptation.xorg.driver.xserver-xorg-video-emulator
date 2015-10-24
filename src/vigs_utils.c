@@ -328,3 +328,38 @@ void *vigs_copy_image(int width, int height,
 
     return d;
 }
+
+void vigs_box_intersect(BoxPtr dest, BoxPtr a, BoxPtr b)
+{
+    dest->x1 = a->x1 > b->x1 ? a->x1 : b->x1;
+    dest->x2 = a->x2 < b->x2 ? a->x2 : b->x2;
+
+    if (dest->x1 >= dest->x2) {
+        dest->x1 = dest->x2 = dest->y1 = dest->y2 = 0;
+        return;
+    }
+
+    dest->y1 = a->y1 > b->y1 ? a->y1 : b->y1;
+    dest->y2 = a->y2 < b->y2 ? a->y2 : b->y2;
+
+    if (dest->y1 >= dest->y2) {
+        dest->x1 = dest->x2 = dest->y1 = dest->y2 = 0;
+    }
+}
+
+void vigs_crtc_box(xf86CrtcPtr crtc, BoxPtr crtc_box)
+{
+    if (crtc->enabled) {
+        crtc_box->x1 = crtc->x;
+        crtc_box->x2 = crtc->x + xf86ModeWidth(&crtc->mode, crtc->rotation);
+        crtc_box->y1 = crtc->y;
+        crtc_box->y2 = crtc->y + xf86ModeHeight(&crtc->mode, crtc->rotation);
+    } else {
+        crtc_box->x1 = crtc_box->x2 = crtc_box->y1 = crtc_box->y2 = 0;
+    }
+}
+
+int vigs_box_area(BoxPtr box)
+{
+    return (int)(box->x2 - box->x1) * (int)(box->y2 - box->y1);
+}

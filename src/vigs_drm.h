@@ -44,6 +44,7 @@ struct vigs_drm_device;
 struct vigs_drm_surface;
 struct vigs_screen;
 struct vigs_dri2_frame_event;
+struct vigs_drm_queue;
 
 struct vigs_drm
 {
@@ -52,6 +53,7 @@ struct vigs_drm
     int fd;
 
     char* drm_device_name;
+    char *drm_render_node;
 
     struct vigs_drm_device *dev;
 
@@ -64,7 +66,36 @@ struct vigs_drm
     drmEventContext event_context;
 
     uint32_t fb_id;
+
+    struct vigs_list queue;
+    uint32_t seq;
 };
+
+typedef void (*vigs_drm_handler_proc)(void *data,
+                                      unsigned int sequence,
+                                      unsigned int tv_sec,
+                                      unsigned int tv_usec);
+
+typedef void (*vigs_drm_abort_proc)(void *data);
+
+struct vigs_drm_queue *vigs_drm_queue_alloc(struct vigs_drm *drm,
+                                            void *data,
+                                            vigs_drm_handler_proc handler,
+                                            vigs_drm_abort_proc abort);
+
+uint32_t vigs_drm_queue_seq(struct vigs_drm_queue *q);
+
+void vigs_drm_queue_abort_one(struct vigs_drm_queue *q);
+
+void vigs_drm_queue_abort(struct vigs_drm *drm,
+                          Bool (*match)(void *data, void *match_data),
+                          void *match_data);
+
+void vigs_drm_queue_abort_seq(struct vigs_drm *drm, uint32_t seq);
+
+int vigs_drm_read_events(struct vigs_drm *drm);
+
+int vigs_drm_get_client_fd(struct vigs_drm *drm);
 
 Bool vigs_drm_pre_init(struct vigs_screen *vigs_screen,
                        const char *bus_id);
@@ -80,7 +111,9 @@ Bool vigs_drm_set_master(struct vigs_drm *drm);
 void vigs_drm_drop_master(struct vigs_drm *drm);
 
 Bool vigs_drm_pageflip(struct vigs_drm *drm,
-                       struct vigs_dri2_frame_event *frame_event,
-                       struct vigs_drm_surface *sfc);
+                       struct vigs_drm_surface *sfc,
+                       void *data,
+                       vigs_drm_handler_proc handler,
+                       vigs_drm_abort_proc abort);
 
 #endif

@@ -44,6 +44,7 @@
 
 struct vigs_drm;
 struct vigs_comm;
+struct vigs_cursor;
 struct vigs_xv;
 struct vigs_drm_surface;
 
@@ -61,6 +62,8 @@ struct vigs_screen
      */
     uint32_t max_execbuffer_size;
     int no_accel;
+    int hwcursor;
+    int dri3;
     /*
      * @}
      */
@@ -83,6 +86,8 @@ struct vigs_screen
 
     uxa_driver_t *uxa_driver;
 
+    struct vigs_cursor *cursor;
+
     struct vigs_xv *xv;
 
     CloseScreenProcPtr close_screen_fn;
@@ -98,6 +103,11 @@ struct vigs_screen
      */
     struct vigs_list dirty_vram_pixmaps;
 };
+
+xf86CrtcPtr vigs_screen_covering_crtc(ScrnInfoPtr scrn,
+                                      BoxPtr box,
+                                      xf86CrtcPtr desired,
+                                      BoxPtr crtc_box_ret);
 
 Bool vigs_screen_pre_init(ScrnInfoPtr scrn, int flags);
 

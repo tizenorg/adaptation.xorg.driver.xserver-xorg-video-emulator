@@ -4,7 +4,7 @@
 Name:       xorg-x11-drv-vigs
 Summary:    X.Org X server driver for VIGS
 Version:    12.0.3
-Release:    1
+Release:    2
 Group:      System/X Hardware Support
 ExclusiveArch:  %{ix86}
 License:    MIT

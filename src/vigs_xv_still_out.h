@@ -1,12 +1,12 @@
 /*
  * X.Org X server driver for VIGS
  *
- * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
+ * Copyright (c) 2015 Samsung Electronics Co., Ltd. All rights reserved.
  *
  * Contact :
- * Stanislav Vorobiov <s.vorobiov@samsung.com>
+ * Vasily Ulyanov <v.ulyanov@samsung.com>
  * Jinhyung Jo <jinhyung.jo@samsung.com>
- * YeongKyoon Lee <yeongkyoon.lee@samsung.com>
+ * Sangho Park <sangho.p@samsung.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -31,37 +31,14 @@
  *
  */
 
-#include "vigs_options.h"
+#ifndef _VIGS_XV_STILL_OUT_H_
+#define _VIGS_XV_STILL_OUT_H_
 
-const OptionInfoRec g_vigs_options[vigs_option_count + 1] =
-{
-    {
-        vigs_option_max_execbuffer_size,
-        "MaxExecbufferSize",
-        OPTV_INTEGER,
-        { 100000 },
-        FALSE
-    },
-    {
-        vigs_option_hwcursor,
-        "HWCursor",
-        OPTV_BOOLEAN,
-        { 0 },
-        FALSE
-    },
-    {
-        vigs_option_no_accel,
-        "NoAccel",
-        OPTV_BOOLEAN,
-        { 0 },
-        FALSE
-    },
-    {
-        vigs_option_dri3,
-        "dri3",
-        OPTV_BOOLEAN,
-        { 0 },
-        FALSE
-    },
-    { -1, NULL, OPTV_NONE, {0}, FALSE }
-};
+#include "vigs_config.h"
+
+struct vigs_xv;
+struct vigs_xv_adaptor;
+
+struct vigs_xv_adaptor *vigs_xv_still_out_create(struct vigs_xv *xv);
+
+#endif

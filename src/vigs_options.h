@@ -41,6 +41,8 @@ typedef enum
 {
     vigs_option_max_execbuffer_size = 0,
     vigs_option_no_accel,
+    vigs_option_hwcursor,
+    vigs_option_dri3,
     vigs_option_count,
 } vigs_option;
 

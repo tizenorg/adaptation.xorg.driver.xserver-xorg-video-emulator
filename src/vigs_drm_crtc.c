@@ -34,6 +34,7 @@
 #include "vigs_drm_crtc.h"
 #include "vigs_drm.h"
 #include "vigs_drm_output.h"
+#include "vigs_cursor.h"
 #include "vigs_utils.h"
 #include "vigs_screen.h"
 #include "vigs_log.h"
@@ -166,24 +167,59 @@ static void vigs_drm_crtc_destroy(xf86CrtcPtr crtc)
 
 static void vigs_drm_crtc_set_cursor_colors(xf86CrtcPtr crtc, int bg, int fg)
 {
+    VIGS_LOG_TRACE("enter");
 }
 
 static void vigs_drm_crtc_set_cursor_position(xf86CrtcPtr crtc, int x, int y)
 {
+    struct vigs_drm_crtc *vigs_crtc = crtc->driver_private;
+    struct vigs_cursor *cursor = vigs_crtc->drm->screen->cursor;
+
+    VIGS_LOG_TRACE("enter");
+
+    if (!cursor)
+        return;
+
+    vigs_cursor_set_position(cursor, x, y, crtc->cursor_shown);
 }
 
 static void vigs_drm_crtc_show_cursor(xf86CrtcPtr crtc)
 {
+    struct vigs_drm_crtc *vigs_crtc = crtc->driver_private;
+    struct vigs_cursor *cursor = vigs_crtc->drm->screen->cursor;
+
     VIGS_LOG_TRACE("enter");
+
+    if (!cursor)
+        return;
+
+    vigs_cursor_show(cursor);
 }
 
 static void vigs_drm_crtc_hide_cursor(xf86CrtcPtr crtc)
 {
+    struct vigs_drm_crtc *vigs_crtc = crtc->driver_private;
+    struct vigs_cursor *cursor = vigs_crtc->drm->screen->cursor;
+
     VIGS_LOG_TRACE("enter");
+
+    if (!cursor)
+        return;
+
+    vigs_cursor_hide(cursor);
 }
 
 static void vigs_drm_crtc_load_cursor_argb(xf86CrtcPtr crtc, CARD32 *image)
 {
+    struct vigs_drm_crtc *vigs_crtc = crtc->driver_private;
+    struct vigs_cursor *cursor = vigs_crtc->drm->screen->cursor;
+
+    VIGS_LOG_TRACE("enter");
+
+    if (!cursor)
+        return;
+
+    vigs_cursor_load_argb(cursor, image);
 }
 
 static const xf86CrtcFuncsRec vigs_drm_crtc_funcs =

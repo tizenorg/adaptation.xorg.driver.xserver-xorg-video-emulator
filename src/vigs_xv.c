@@ -34,7 +34,9 @@
 #include "vigs_xv.h"
 #include "vigs_xv_image_out.h"
 #include "vigs_xv_in.h"
+#include "vigs_xv_still_out.h"
 #include "vigs_screen.h"
+#include "vigs_protocol.h"
 #include "vigs_xv_adaptor.h"
 #include "vigs_xv_overlay.h"
 #include "vigs_drm.h"
@@ -105,6 +107,11 @@ Bool vigs_xv_init(struct vigs_screen *vigs_screen)
                        plane,
                        &vigs_screen->drm->planes,
                        list) {
+        /* TODO Redesign: cursor support */
+        if (i == VIGS_MAX_PLANES - 1) {
+            break;
+        }
+
         xv->overlays[i] = vigs_xv_overlay_create(plane);
 
         if (!xv->overlays[i]) {
@@ -129,6 +136,14 @@ Bool vigs_xv_init(struct vigs_screen *vigs_screen)
     }
 
     xv->adaptors[1] = &adaptor->base;
+
+    adaptor = vigs_xv_still_out_create(xv);
+
+    if (!adaptor) {
+        return FALSE;
+    }
+
+    xv->adaptors[2] = &adaptor->base;
 
     if (!xf86XVScreenInit(scrn->pScreen, &xv->adaptors[0], VIGS_NUM_XV_ADAPTORS)) {
         xf86DrvMsg(scrn->scrnIndex, X_ERROR, "xf86XVScreenInit failed\n");
